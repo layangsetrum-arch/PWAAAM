@@ -1,0 +1,324 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Profil pengguna yang terautentikasi",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID Pengguna Firebase Auth (UID)"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Alamat email pengguna"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Nama tampilan pengguna"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembuatan profil"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan terakhir profil"
+        }
+      },
+      "required": ["id", "email", "createdAt", "updatedAt"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Layanan AI atau tautan web yang dikelola",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik layanan"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Nama layanan AI"
+        },
+        "urlTemplate": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "URL dasar layanan"
+        },
+        "usesAuthuser": {
+          "type": "boolean",
+          "description": "Apakah layanan menggunakan parameter authuser Google"
+        },
+        "resetRule": {
+          "type": "object",
+          "description": "Aturan perhitungan reset status layanan"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembuatan layanan"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan layanan"
+        }
+      },
+      "required": ["id", "name", "urlTemplate", "usesAuthuser", "createdAt", "updatedAt"]
+    },
+    "Person": {
+      "title": "Person",
+      "description": "Akun Google pemilik akses",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik akun"
+        },
+        "ownerName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Nama pemilik akun"
+        },
+        "googleEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 150,
+          "description": "Email Google pemilik"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Label akun"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Catatan akun"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pendaftaran akun"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan akun"
+        }
+      },
+      "required": ["id", "ownerName", "googleEmail", "label", "createdAt", "updatedAt"]
+    },
+    "Access": {
+      "title": "Access",
+      "description": "Hubungan akses akun ke layanan tertentu beserta status limitnya",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik entri akses"
+        },
+        "personId": {
+          "type": "string",
+          "description": "ID akun Person terkait"
+        },
+        "serviceId": {
+          "type": "string",
+          "description": "ID layanan Service terkait"
+        },
+        "loginMethod": {
+          "type": "string",
+          "enum": ["google", "own"],
+          "description": "Metode login pada layanan"
+        },
+        "loginName": {
+          "type": "string",
+          "maxLength": 150,
+          "description": "Nama pengguna/login non-Google"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ready", "limited"],
+          "description": "Status limit akses"
+        },
+        "limitedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu status berubah menjadi limited"
+        },
+        "resetAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu estimasi status kembali ready"
+        },
+        "activeSessionStart": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu mulai sesi pemakaian aktif"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu dibuat"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu diperbarui"
+        }
+      },
+      "required": ["id", "personId", "serviceId", "loginMethod", "status", "createdAt", "updatedAt"]
+    },
+    "UsageLog": {
+      "title": "UsageLog",
+      "description": "Log aktivitas sesi atau perubahan status",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID log unik"
+        },
+        "accessId": {
+          "type": "string",
+          "description": "ID akses terkait"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["opened", "stop", "limit_hit", "reset_ready", "note"],
+          "description": "Jenis kejadian"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu kejadian tercatat"
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Durasi pemakaian dalam detik"
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Detail penjelasan log"
+        }
+      },
+      "required": ["id", "accessId", "type", "at"]
+    },
+    "HandoffNote": {
+      "title": "HandoffNote",
+      "description": "Catatan lanjutan bersama per layanan",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID catatan"
+        },
+        "serviceId": {
+          "type": "string",
+          "description": "ID layanan terkait"
+        },
+        "accessId": {
+          "type": "string",
+          "description": "ID akses aktif penulis catatan"
+        },
+        "authorName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Nama penulis catatan"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Isi pesan catatan lanjutan"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu penulisan catatan"
+        }
+      },
+      "required": ["id", "serviceId", "accessId", "authorName", "text", "createdAt"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Pengaturan aplikasi pengguna",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID dokumen pengaturan"
+        },
+        "resetTimezone": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Timezone zona waktu reset"
+        },
+        "maxPersons": {
+          "type": "number",
+          "description": "Batas maksimum akun (default 10)"
+        },
+        "googleSpreadsheetId": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "ID Google Spreadsheet yang terhubung"
+        },
+        "googleSpreadsheetTitle": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Judul Google Spreadsheet"
+        },
+        "googleSpreadsheetUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "URL Google Spreadsheet"
+        },
+        "lastGoogleSyncAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp sinkronisasi Google Sheet terakhir"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu terakhir pembaruan pengaturan"
+        }
+      },
+      "required": ["id", "resetTimezone", "maxPersons", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Dokumen profil pengguna"
+    },
+    "/users/{userId}/services/{serviceId}": {
+      "schema": "Service",
+      "description": "Koleksi layanan AI per pengguna"
+    },
+    "/users/{userId}/persons/{personId}": {
+      "schema": "Person",
+      "description": "Koleksi akun per pengguna"
+    },
+    "/users/{userId}/access/{accessId}": {
+      "schema": "Access",
+      "description": "Koleksi status akses per layanan untuk akun pengguna"
+    },
+    "/users/{userId}/logs/{logId}": {
+      "schema": "UsageLog",
+      "description": "Koleksi log aktivitas pemakaian akun pengguna"
+    },
+    "/users/{userId}/handoffNotes/{noteId}": {
+      "schema": "HandoffNote",
+      "description": "Koleksi catatan lanjutan kolaboratif tim per pengguna"
+    },
+    "/users/{userId}/settings/{settingsId}": {
+      "schema": "Settings",
+      "description": "Pengaturan aplikasi per pengguna"
+    }
+  }
+}

@@ -20,7 +20,7 @@ describe('access.test', () => {
     dbCounter += 1;
   });
 
-  const getTestDbName = () => `test_access_db_${Date.now()}_${dbCounter}`;
+  const getTestDbName = () => `test_access_db_${Date.now()}_${Math.random().toString(36).slice(2)}_${dbCounter}`;
 
   it('one_person_many_services', async () => {
     const db = await getDatabase(getTestDbName());

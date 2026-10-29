@@ -105,7 +105,7 @@ export async function createServiceWithValidation(
     throw new Error(`Layanan dengan nama "${trimmedName}" sudah ada.`);
   }
 
-  const id = service.id || `srv-${Date.now()}`;
+  const id = service.id || `srv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
   return storageCreateService(
     {

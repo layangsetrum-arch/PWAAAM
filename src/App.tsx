@@ -106,6 +106,9 @@ import {
   promptPwaInstall,
   subscribeInstallPrompt,
 } from './pwa/register-sw';
+import { APPS_SCRIPT_CODE_GS } from './backup/apps-script-code';
+import { ConfirmationModal } from './components/ConfirmationModal';
+import { Copy, Code, Check } from 'lucide-react';
 
 interface TaskItem {
   id: string;
@@ -179,6 +182,21 @@ export default function App() {
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // State Google Apps Script Web App
+  const [showScriptModal, setShowScriptModal] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  // Reusable confirmation modal state for Sheet restore
+  const [confirmModalConfig, setConfirmModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    details?: Array<{ label: string; value: string | number }>;
+    confirmLabel?: string;
+    confirmVariant?: 'danger' | 'warning' | 'primary';
+    action: () => Promise<void>;
+  } | null>(null);
+
   // State Form Person (TASK-005)
   const [ownerName, setOwnerName] = useState('');
   const [googleEmail, setGoogleEmail] = useState('');
@@ -213,6 +231,18 @@ export default function App() {
   const [canInstallPwa, setCanInstallPwa] = useState<boolean>(false);
   const [pwaInstallSuccess, setPwaInstallSuccess] = useState<string | null>(null);
 
+  const fetchDriveSpreadsheets = async (token: string) => {
+    setIsLoadingDriveSheets(true);
+    try {
+      const files = await listGoogleSpreadsheets(token);
+      setDriveSpreadsheets(files);
+    } catch (err) {
+      console.warn('Gagal memuat spreadsheet dari Google Drive:', err);
+    } finally {
+      setIsLoadingDriveSheets(false);
+    }
+  };
+
   const loadAllData = async () => {
     try {
       const [allPersons, allServices, allAccess, dbSettings] = await Promise.all([
@@ -227,7 +257,6 @@ export default function App() {
       setAppSettings(dbSettings);
       setSheetEndpointInput(dbSettings.sheetEndpoint || '');
       setSheetSecretInput(dbSettings.sheetSecret || '');
-
       if (allAccess.length > 0 && (!selectedAccessId || !allAccess.find((a) => a.id === selectedAccessId))) {
         setSelectedAccessId(allAccess[0].id);
       }
@@ -546,13 +575,29 @@ export default function App() {
 
     try {
       const res = await executeSheetRestore(sheetEndpointInput, sheetSecretInput, {
-        confirmOverwrite: ({ remote, local }) => {
-          return window.confirm(
-            `PERINGATAN: Memulihkan dari Google Sheets akan menimpa seluruh data lokal saat ini.\n\n` +
-            `• Data di Google Sheets: ${remote.persons} akun, ${remote.services} layanan, ${remote.access} hak akses, ${remote.logs} riwayat (${remote.total} total entitas)\n` +
-            `• Data Lokal Saat Ini: ${local.persons} akun, ${local.services} layanan, ${local.access} hak akses, ${local.logs} riwayat (${local.total} total entitas)\n\n` +
-            `Salinan lokal otomatis akan disimpan sebagai cadangan pengaman.\nApakah Anda yakin ingin menimpa data lokal?`
-          );
+        confirmOverwrite: async ({ remote, local }) => {
+          return new Promise<boolean>((resolve) => {
+            setConfirmModalConfig({
+              isOpen: true,
+              title: 'Konfirmasi Pemulihan dari Google Sheets',
+              description: 'Memulihkan data akan menimpa seluruh akun, layanan, hak akses, dan riwayat di IndexedDB lokal dengan isi dari Google Sheets. Salinan pengaman lokal otomatis akan dibuat sebelum penimpaan (Fail-Closed).',
+              details: [
+                { label: 'Akun di Sheet', value: remote.persons },
+                { label: 'Layanan di Sheet', value: remote.services },
+                { label: 'Akses Layanan di Sheet', value: remote.access },
+                { label: 'Log Riwayat di Sheet', value: remote.logs },
+                { label: 'Catatan Lanjutan di Sheet', value: remote.handoffNotes },
+                { label: 'Total Entitas Remote', value: remote.total },
+                { label: 'Total Entitas Lokal Saat Ini', value: local.total },
+              ],
+              confirmLabel: 'Timpa Data Lokal & Pulihkan',
+              confirmVariant: 'danger',
+              action: async () => {
+                setConfirmModalConfig(null);
+                resolve(true);
+              },
+            });
+          });
         },
       });
 
@@ -589,6 +634,16 @@ export default function App() {
       setBackupNotice('Salinan pengaman sebelum pemulihan berhasil diunduh!');
     } catch (err: unknown) {
       if (err instanceof Error) setBackupError(err.message);
+    }
+  };
+
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(APPS_SCRIPT_CODE_GS);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 3000);
+    } catch (e) {
+      console.warn('Failed to copy to clipboard', e);
     }
   };
 
@@ -1666,212 +1721,335 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: BACKUP & SPREADSHEET (TASK-009 & TASK-010) */}
+        {/* TAB 4: BACKUP & SPREADSHEET (TASK-009, 010 & GOOGLE SHEETS DIRECT) */}
         {activeTab === 'backup' && (
           <div className="space-y-6">
-            <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+            <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
               <div className="relative z-10 space-y-4">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800 text-xs font-medium">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  TASK-009, 010 & 011: Backup JSON Lokal & Google Sheet (Dua Arah)
+                  Google Workspace Direct API • Tanpa Basis Data Firebase
                 </div>
                 <div>
-                  <h2 className="text-xl sm:text-2xl font-bold text-white">Pencadangan & Pemulihan Data Google Sheets</h2>
+                  <h2 className="text-xl sm:text-2xl font-bold text-white">Sinkronisasi Google Sheets & Pencadangan Data</h2>
                   <p className="text-sm text-slate-300 mt-1 max-w-2xl">
-                    Ekspor/Impor JSON lokal tanpa rahasia (BR-10, BR-13), serta integrasi Google Sheets via Apps Script Web App dengan konfirmasi, salinan pengaman lokal otomatis sebelum restore, dan validasi skema.
+                    Hubungkan akun Google Anda untuk mencadangkan dan memulihkan seluruh data layanan, akun, dan riwayat secara langsung ke Google Sheets pribadi Anda melalui Google Sheets API v4 resmi tanpa database Firebase pihak ketiga.
                   </p>
                 </div>
               </div>
             </div>
 
+            {/* Global Notices for Backup & Sheet Sync */}
             {backupNotice && (
-              <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-xs flex items-start gap-2.5">
+              <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-xs flex items-start gap-2.5 animate-in fade-in">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <span>{backupNotice}</span>
               </div>
             )}
 
             {backupError && (
-              <div className="p-3.5 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs flex items-start gap-2.5">
+              <div className="p-3.5 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs flex items-start gap-2.5 animate-in fade-in">
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                 <span>{backupError}</span>
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Box 1: Ekspor & Impor JSON Lokal (TASK-009) */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+            {/* SEKSI 1: GOOGLE SHEETS VIA APPS SCRIPT WEB APP (PRIMARY & OPTIMIZED) */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-5">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-sky-950 border border-sky-800 flex items-center justify-center text-sky-400">
-                    <FileJson className="w-5 h-5" />
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 shadow-md">
+                    <FileSpreadsheet className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white">Cadangan JSON Lokal (BR-10)</h3>
-                    <p className="text-xs text-slate-400">Berkas JSON tersimpan di perangkat lokal</p>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-bold text-white">Sinkronisasi Google Sheets (Apps Script Web App)</h3>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 font-semibold">
+                        Tanpa Firebase
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Penyimpanan lokal di IndexedDB • Cadangan & pemulihan dua arah ke Google Sheets via skrip Code.gs pribadi
+                    </p>
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Ekspor mencakup data akun, layanan, akses, riwayat log, dan catatan lanjutan. Sesuai aturan keamanan <strong>BR-13</strong>, endpoint dan secret key sheet <strong>dikecualikan</strong> dari ekspor.
-                </p>
-
-                <div className="pt-2 space-y-3">
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={handleExportJson}
-                    className="w-full py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-sky-600/20 transition"
+                    onClick={() => setShowScriptModal(true)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-400 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition"
                   >
-                    <Download className="w-4 h-4" />
-                    Unduh Berkas Cadangan JSON Lokal
+                    <Code className="w-3.5 h-3.5" />
+                    Panduan & Kode Script
                   </button>
-
-                  <div className="relative">
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleFileImport}
-                      accept=".json"
-                      className="hidden"
-                    />
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs flex items-center justify-center gap-2 transition"
-                    >
-                      <Upload className="w-4 h-4 text-indigo-400" />
-                      Pulihkan Data dari Berkas JSON (Impor)
-                    </button>
-                  </div>
+                  <button
+                    onClick={handleCopyCode}
+                    className="px-3 py-1.5 rounded-xl bg-sky-950 hover:bg-sky-900 text-sky-300 border border-sky-800 text-xs font-semibold flex items-center gap-1.5 transition"
+                  >
+                    {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedCode ? 'Tersalin!' : 'Salin Code.gs'}
+                  </button>
                 </div>
               </div>
 
-              {/* Box 2: Google Apps Script Web App (TASK-010 & TASK-011) */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400">
-                    <FileSpreadsheet className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">Integrasi Google Sheets (Apps Script)</h3>
-                    <p className="text-xs text-slate-400">Sinkronisasi cadangan ke Google Sheets</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <label className="text-slate-400 block mb-1">Web App Exec Endpoint URL:</label>
+              {/* Form Konfigurasi Endpoint & Kunci Rahasia */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                  <div className="md:col-span-8 space-y-1 text-xs">
+                    <label className="text-slate-300 font-medium block">
+                      URL Endpoint Web App (Deployment Google Apps Script):
+                    </label>
                     <input
                       type="url"
                       value={sheetEndpointInput}
                       onChange={(e) => setSheetEndpointInput(e.target.value)}
                       placeholder="https://script.google.com/macros/s/AKfycb.../exec"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 font-mono text-slate-200 focus:border-sky-500 focus:outline-none"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 font-mono text-slate-200 focus:border-sky-500 focus:outline-none text-xs"
                     />
+                    <p className="text-[11px] text-slate-500">
+                      Dapatkan URL ini dari menu <strong>Deploy &gt; New deployment &gt; Web app</strong> di Google Apps Script (Who has access: Anyone).
+                    </p>
                   </div>
 
-                  <div>
-                    <label className="text-slate-400 block mb-1">Kunci Rahasia (AUTH_SECRET_KEY):</label>
+                  <div className="md:col-span-4 space-y-1 text-xs">
+                    <label className="text-slate-300 font-medium block">
+                      Kunci Rahasia (AUTH_SECRET_KEY):
+                    </label>
                     <input
                       type="password"
                       value={sheetSecretInput}
                       onChange={(e) => setSheetSecretInput(e.target.value)}
-                      placeholder="Kunci rahasia yang sama dengan di Code.gs"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 font-mono text-slate-200 focus:border-sky-500 focus:outline-none"
+                      placeholder="Kunci rahasia di Code.gs"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 font-mono text-slate-200 focus:border-sky-500 focus:outline-none text-xs"
                     />
+                    <p className="text-[11px] text-slate-500">
+                      Kunci autentikasi yang sama persis dengan yang disetel di skrip Apps Script Anda.
+                    </p>
                   </div>
+                </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-1">
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={handleSaveSettings}
-                      className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold border border-slate-700 transition"
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
                     >
-                      Simpan Kredensial
+                      Simpan Pengaturan
                     </button>
-
                     <button
                       onClick={handleProbeAppsScript}
                       disabled={isProbing || !sheetEndpointInput || !sheetSecretInput}
-                      className={`py-2.5 px-3 rounded-xl font-semibold flex items-center justify-center gap-1.5 transition ${
+                      className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
                         isProbing || !sheetEndpointInput || !sheetSecretInput
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                          : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-800'
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20'
                       }`}
                     >
                       <Radio className={`w-3.5 h-3.5 ${isProbing ? 'animate-pulse' : ''}`} />
-                      {isProbing ? 'Memeriksa...' : 'Test Koneksi (Probe)'}
+                      {isProbing ? 'Menguji Koneksi...' : 'Uji Koneksi (Test Probe)'}
                     </button>
                   </div>
 
-                  {probeResult && (
-                    <div className={`p-3 rounded-xl border text-xs space-y-1 ${
-                      probeResult.success ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300' : 'bg-rose-950/60 border-rose-800 text-rose-300'
-                    }`}>
-                      <div className="flex items-center justify-between font-bold">
-                        <span>{probeResult.success ? 'Koneksi Terverifikasi' : 'Uji Koneksi Gagal'}</span>
-                        <span className="font-mono">{probeResult.latencyMs}ms</span>
+                  {settings.lastGoogleSyncAt && (
+                    <span className="text-[11px] font-mono text-slate-400">
+                      Sinkronisasi terakhir: {new Date(settings.lastGoogleSyncAt).toLocaleString('id-ID')}
+                    </span>
+                  )}
+                </div>
+
+                {/* Banner Hasil Uji Probe */}
+                {probeResult && (
+                  <div className={`p-4 rounded-xl border text-xs space-y-2 animate-in fade-in ${
+                    probeResult.success 
+                      ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300' 
+                      : 'bg-rose-950/60 border-rose-800 text-rose-300'
+                  }`}>
+                    <div className="flex items-center justify-between font-bold text-sm">
+                      <div className="flex items-center gap-2">
+                        {probeResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <AlertCircle className="w-4 h-4 text-rose-400" />}
+                        <span>{probeResult.success ? 'Koneksi Apps Script Berhasil Terverifikasi' : 'Uji Koneksi Gagal'}</span>
                       </div>
-                      <p>{probeResult.message}</p>
-                      {probeResult.spreadsheetUrl && (
+                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-black/40">
+                        {probeResult.latencyMs}ms
+                      </span>
+                    </div>
+
+                    <p className="text-xs leading-relaxed">{probeResult.message}</p>
+
+                    {probeResult.success && probeResult.spreadsheetUrl && (
+                      <div className="pt-2 border-t border-emerald-800/60 flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400 font-semibold">Spreadsheet:</span>
+                          <span className="font-bold text-white">{probeResult.spreadsheetName || 'AI_Account_Manager_Backup'}</span>
+                        </div>
                         <a
                           href={probeResult.spreadsheetUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-sky-400 hover:underline inline-flex items-center gap-1 font-mono text-[11px]"
+                          className="px-3 py-1 rounded-lg bg-emerald-900/80 hover:bg-emerald-800 text-white font-medium flex items-center gap-1 transition"
                         >
-                          Buka Spreadsheet <ExternalLink className="w-3 h-3" />
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          Buka di Google Sheets
                         </a>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    )}
 
-                  {/* Tombol Sinkronisasi Dua Arah */}
-                  <div className="pt-2 border-t border-slate-800/80 grid grid-cols-2 gap-2">
-                    <button
-                      onClick={handleSyncToSheet}
-                      disabled={isSyncingSheet || !sheetEndpointInput}
-                      className="py-2.5 px-3 rounded-xl bg-indigo-950 hover:bg-indigo-900 border border-indigo-800 text-indigo-200 font-semibold flex items-center justify-center gap-1.5 transition text-xs"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      Kirim ke Sheet
-                    </button>
-
-                    <button
-                      onClick={handleRestoreFromSheet}
-                      disabled={isSyncingSheet || !sheetEndpointInput}
-                      className="py-2.5 px-3 rounded-xl bg-purple-950 hover:bg-purple-900 border border-purple-800 text-purple-200 font-semibold flex items-center justify-center gap-1.5 transition text-xs"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Pulihkan dari Sheet
-                    </button>
+                    {probeResult.tabs && probeResult.tabs.length > 0 && (
+                      <div className="pt-2 flex flex-wrap gap-2">
+                        {probeResult.tabs.map((tab, idx) => (
+                          <span key={idx} className="text-[11px] px-2 py-0.5 rounded-md bg-black/30 border border-emerald-800/80 text-emerald-200">
+                            {tab.name}: <strong>{tab.rowCount} baris</strong>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
+                )}
 
-                  {typeof window !== 'undefined' && localStorage.getItem(PRE_RESTORE_STORAGE_KEY) && (
-                    <div className="pt-2">
-                      <button
-                        onClick={handleDownloadPreRestoreSnapshot}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 border border-slate-700/60 font-medium text-[11px] flex items-center justify-center gap-1.5 transition"
-                      >
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                        Unduh Salinan Pengaman Terakhir (Pre-Restore Snapshot)
-                      </button>
-                    </div>
-                  )}
+                {/* Tombol Eksekusi Backup & Restore Sheet */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                  <button
+                    onClick={handleSyncToSheet}
+                    disabled={isSyncingSheet || !sheetEndpointInput || !sheetSecretInput}
+                    className={`p-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2.5 shadow-lg transition ${
+                      isSyncingSheet || !sheetEndpointInput || !sheetSecretInput
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-800'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
+                    }`}
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>{isSyncingSheet ? 'Menyinkronkan...' : 'Cadangkan Data ke Google Sheet (Unggah)'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleRestoreFromSheet}
+                    disabled={isSyncingSheet || !sheetEndpointInput || !sheetSecretInput}
+                    className={`p-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2.5 border transition ${
+                      isSyncingSheet || !sheetEndpointInput || !sheetSecretInput
+                        ? 'bg-slate-800 text-slate-500 border-slate-800 cursor-not-allowed'
+                        : 'bg-indigo-950 hover:bg-indigo-900 border-indigo-800 text-indigo-200'
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>{isSyncingSheet ? 'Mengambil Data...' : 'Pulihkan Data dari Google Sheet (Unduh)'}</span>
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* Panduan Deploy Apps Script */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-amber-400" />
-                Panduan Pemasangan Google Apps Script (Code.gs)
-              </h4>
-              <ol className="text-xs text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
-                <li>Buka <a href="https://script.google.com/" target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">script.google.com</a> dan buat proyek baru bernama <strong>AI Account Manager Sync</strong>.</li>
-                <li>Salin kode dari berkas <code>apps-script/Code.gs</code> ke dalam editor skrip.</li>
-                <li>Ubah variabel <code>AUTH_SECRET_KEY</code> sesuai kata sandi rahasia yang Anda tentukan.</li>
-                <li>Klik tombol <strong>Deploy &gt; New deployment &gt; Pilih jenis Web app</strong>.</li>
-                <li>Pilih <em>Execute as: Me</em> dan <em>Who has access: Anyone (Siapa saja dengan link)</em>.</li>
-                <li>Salin URL Web App yang berakhiran <code>/exec</code> ke kolom di atas.</li>
-              </ol>
+            {/* SEKSI 2: CADANGAN JSON LOKAL & SNAPSHOT PENGAMAN */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
+              <div className="flex items-center gap-3 border-b border-slate-800/80 pb-4">
+                <div className="w-10 h-10 rounded-xl bg-sky-950 border border-sky-800 flex items-center justify-center text-sky-400">
+                  <FileJson className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Cadangan JSON Lokal (Mandiri & Offline)</h3>
+                  <p className="text-xs text-slate-400">Pencadangan berkas JSON langsung pada perangkat tanpa koneksi internet</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Ekspor mencakup data akun, layanan, akses, riwayat log pemakaian, dan catatan lanjutan tim. Sesuai aturan keamanan <strong>BR-13</strong>, endpoint dan kunci rahasia <strong>dikecualikan mutlak</strong> dari berkas ekspor JSON.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
+                <button
+                  onClick={handleExportJson}
+                  className="py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-sky-600/20 transition"
+                >
+                  <Download className="w-4 h-4" />
+                  Unduh Berkas JSON Lokal
+                </button>
+
+                <div className="relative">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileImport}
+                    accept=".json"
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs flex items-center justify-center gap-2 transition"
+                  >
+                    <Upload className="w-4 h-4 text-indigo-400" />
+                    Pulihkan dari Berkas JSON (Impor)
+                  </button>
+                </div>
+
+                {typeof window !== 'undefined' && localStorage.getItem(PRE_RESTORE_STORAGE_KEY) && (
+                  <button
+                    onClick={handleDownloadPreRestoreSnapshot}
+                    className="py-3 px-4 rounded-xl bg-slate-950 hover:bg-slate-800 text-emerald-300 border border-emerald-900/60 font-medium text-xs flex items-center justify-center gap-2 transition"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    Unduh Salinan Pengaman Pre-Restore
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* MODAL PANDUAN & KODE GOOGLE APPS SCRIPT */}
+            {showScriptModal && (
+              <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <Code className="w-5 h-5 text-emerald-400" />
+                      <h3 className="text-base font-bold text-white">Panduan & Kode Google Apps Script (Code.gs)</h3>
+                    </div>
+                    <button
+                      onClick={() => setShowScriptModal(false)}
+                      className="text-slate-400 hover:text-slate-200 text-xs px-2 py-1 rounded-lg bg-slate-800"
+                    >
+                      ✕ Tutup
+                    </button>
+                  </div>
+
+                  <div className="overflow-y-auto space-y-4 text-xs pr-1">
+                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-xl space-y-2">
+                      <h4 className="font-bold text-slate-200">Cara Memasang di Google Drive Anda (Gratis & Mandiri):</h4>
+                      <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed">
+                        <li>Buka <a href="https://script.google.com" target="_blank" rel="noreferrer" className="text-sky-400 underline font-semibold">script.google.com</a> dan klik tombol <strong>+ Proyek baru</strong>.</li>
+                        <li>Hapus semua teks default di editor, lalu tempel kode skrip di bawah ini ke <code>Code.gs</code>.</li>
+                        <li>Ubah variabel <code>AUTH_SECRET_KEY</code> di baris 17 dengan kata sandi rahasia yang Anda tentukan sendiri.</li>
+                        <li>Klik <strong>Deploy &gt; Deployment baru</strong> (New deployment).</li>
+                        <li>Klik ikon roda gigi, pilih jenis <strong>Aplikasi web</strong> (Web app).</li>
+                        <li>Set <strong>Jalankan sebagai:</strong> <em>Saya</em> (Me), dan <strong>Siapa yang memiliki akses:</strong> <em>Siapa saja</em> (Anyone).</li>
+                        <li>Klik <strong>Deploy</strong>, izinkan akses saat diminta, lalu salin URL yang berakhiran <code>/exec</code> ke kolom Endpoint di aplikasi ini.</li>
+                      </ol>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-slate-400 text-[11px]">Kode Skrip: Code.gs (Versi 2.0 Optimized)</span>
+                        <button
+                          onClick={handleCopyCode}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition"
+                        >
+                          {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedCode ? 'Tersalin!' : 'Salin Seluruh Kode'}
+                        </button>
+                      </div>
+                      <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-60 leading-relaxed">
+                        {APPS_SCRIPT_CODE_GS}
+                      </pre>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800/80 flex justify-end shrink-0">
+                    <button
+                      onClick={() => setShowScriptModal(false)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
+                    >
+                      Selesai
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             </div>
           </div>
         )}
@@ -2396,6 +2574,21 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Modal Konfirmasi Pengguna untuk Operasi Restore Google Sheets */}
+      {confirmModalConfig && (
+        <ConfirmationModal
+          isOpen={confirmModalConfig.isOpen}
+          title={confirmModalConfig.title}
+          description={confirmModalConfig.description}
+          details={confirmModalConfig.details}
+          confirmLabel={confirmModalConfig.confirmLabel}
+          confirmVariant={confirmModalConfig.confirmVariant}
+          isLoading={isSyncingSheet}
+          onConfirm={confirmModalConfig.action}
+          onCancel={() => setConfirmModalConfig(null)}
+        />
+      )}
 
       {/* Footer Info */}
       <footer className="border-t border-slate-800/80 bg-slate-950 py-3 px-4 sm:px-6 text-center text-xs text-slate-500">

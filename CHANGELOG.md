@@ -7,6 +7,10 @@ Mengikuti Keep a Changelog dan SemVer. Perubahan Level S (`[MINOR]`) dan task re
 ## [Unreleased]
 
 ### Added
+- [MINOR] Penanganan Graceful Pembatalan Google Sign-In (`src/google/auth.ts`, `src/App.tsx`, `tests/google-sheets.test.ts`):
+  - Menangani error `auth/popup-closed-by-user` dan `auth/cancelled-popup-request` secara graceful tanpa melempar exception atau memicu console error saat pengguna sengaja menutup jendela pop-up login.
+  - Memberikan pesan interaktif yang jelas bila pop-up diblokir oleh browser (`auth/popup-blocked`).
+  - Unit test `isUserCancellationError` ditambahkan di `tests/google-sheets.test.ts` (total 75/75 tests lulus di 17 test files).
 - [TASK-REV-03] Validasi Semantik Impor & Integritas Relasional (JSON & Sheet) (`src/backup/json-backup.ts`, `src/backup/sheet-backup.ts`, `tests/backup-json.test.ts`, `tests/backup-sheet.test.ts`, `BLUEPRINT.md`):
   - Penolakan Versi Skema Asing: Menolak versi skema selain versi 1 secara eksplisit untuk mencegah korupsi versi masa depan/tidak kompatibel (AC-1).
   - Isolasi Kebijakan Batas Akun Lokal: Menegakkan batas maksimal 10 akun (BR-07, ASM-02) dan mengisolasi pengaturan `maxPersons` lokal agar tidak dapat di-override atau dibypass oleh berkas impor/remote (AC-2, penutupan F-05 Claude / F-04 ChatGPT).
@@ -72,5 +76,6 @@ Mengikuti Keep a Changelog dan SemVer. Perubahan Level S (`[MINOR]`) dan task re
 - [MINOR] Penambahan panel interaktif **ZLCE Recovery Generator (Opsi A)** di antarmuka web.
 
 ### Changed
-- Status `TASK-001` s/d `TASK-010` disetujui pengguna dan diverifikasi menjadi `DONE`.
-- Status `TASK-011` (Backup & Restore Google Sheet Klien) beralih menjadi `READY`.
+- Status `TASK-001` s/d `TASK-012` disetujui pengguna dan diverifikasi menjadi `DONE` (Rilis v1.0).
+- Status `TASK-REV-01`, `TASK-REV-02`, dan `TASK-REV-03` disetujui pengguna dan diverifikasi menjadi `DONE` (Rilis Hardening & Google Sheets Sync v1.1).
+- Integrasi Google Sheets mandiri tanpa Firebase Firestore aktif dengan otentikasi OAuth 2.0 Drive/Spreadsheets dan penyimpanan token murni in-memory.

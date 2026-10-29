@@ -72,6 +72,10 @@ export interface Settings {
   resetTimezone: string;
   sheetEndpoint: string;
   sheetSecret: string;
+  googleSpreadsheetId?: string;
+  googleSpreadsheetUrl?: string;
+  googleSpreadsheetTitle?: string;
+  lastGoogleSyncAt?: string;
   maxPersons: number;  // default: 10
   updatedAt: string;
 }

@@ -11,6 +11,8 @@ export interface ProbeResult {
   message: string;
   spreadsheetName?: string;
   spreadsheetUrl?: string;
+  spreadsheetId?: string;
+  tabs?: Array<{ name: string; rowCount: number }>;
   rawError?: string;
 }
 
@@ -125,6 +127,8 @@ export async function probeAppsScript(
         message: json.message || 'Koneksi ke Apps Script & Spreadsheet berhasil!',
         spreadsheetName: json.spreadsheetName,
         spreadsheetUrl: json.spreadsheetUrl,
+        spreadsheetId: json.spreadsheetId,
+        tabs: json.tabs,
       };
     } else {
       return {

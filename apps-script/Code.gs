@@ -3,17 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Google Apps Script Web App untuk AI Account Manager (PWA)
+ * Versi: 2.0 (Optimized & Hardened)
  * 
- * Pembaruan TASK-REV-01:
- * 1. Skema kolom tetap (SCHEMAS) mencegah hilangnya properti opsional (resetAt, limitedAt, durationSec).
- * 2. Pemformatan teks murni ('@') mencegah formula injection (=IMPORTDATA, dll) dan konversi angka otomatis.
- * 3. Parser tipe eksplisit (JSON_COLS & TYPES) mencegah korupsi teks catatan bebas seperti "[1]" atau "{}".
- * 4. Dukungan pembacaan kunci dari PropertiesService untuk keamanan deployment.
+ * Fitur & Optimasi:
+ * 1. Skema kolom tetap (SCHEMAS) menjamin semua atribut (termasuk status limit, durasi, resetAt) terjaga.
+ * 2. Tab Metadata: Menyimpan konfigurasi aplikasi (resetTimezone, maxPersons, statistik pencadangan).
+ * 3. Proteksi Formula Injection: Format teks murni ('@') dan sanitasi karakter formula (=, +, -, @).
+ * 4. Tampilan Spreadsheet Profesional: Header navy (#1e293b), teks putih tebal, baris header dibekukan (freeze), auto-fit lebar kolom.
+ * 5. Batch processing: Menggunakan setValues() & getDisplayValues() untuk performa maksimal.
+ * 6. Diagnosis Lengkap: Aksi "ping" memberikan informasi nama, URL, dan jumlah baris per tab.
  */
 
+// Kunci rahasia default (Dapat diubah di sini atau di Script Properties: AUTH_SECRET_KEY)
 var AUTH_SECRET_KEY = "GANTI_DENGAN_KUNCI_RAHASIA_ANDA";
 
 var SCHEMAS = {
+  metadata: ['key', 'value', 'updatedAt'],
   services: ['id', 'name', 'urlTemplate', 'usesAuthuser', 'resetRule', 'createdAt', 'updatedAt'],
   persons:  ['id', 'ownerName', 'googleEmail', 'label', 'note', 'createdAt', 'updatedAt'],
   access:   ['id', 'personId', 'serviceId', 'loginMethod', 'loginName', 'status', 'limitedAt', 'resetAt', 'activeSessionStart', 'createdAt', 'updatedAt'],
@@ -30,95 +35,199 @@ var TYPES = {
   logs: { durationSec: 'num' }
 };
 
+/**
+ * Endpoint GET: Pemeriksaan status dasar dari browser
+ */
 function doGet(e) {
-  return ContentService.createTextOutput(JSON.stringify({
+  return createJsonResponse({
     status: "ok",
-    message: "AI Account Manager Web App is active. Use POST with secret key to interact."
-  })).setMimeType(ContentService.MimeType.JSON);
+    version: "2.0.0",
+    message: "AI Account Manager Apps Script Web App aktif. Gunakan POST dengan format JSON text/plain untuk berinteraksi.",
+    timestamp: new Date().toISOString()
+  });
 }
 
+/**
+ * Endpoint POST: Menangani ping, backup, dan restore
+ */
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
-      return createJsonResponse({ success: false, error: "Empty request body" }, 400);
+      return createJsonResponse({ success: false, error: "Bad Request: Body permintaan kosong." }, 400);
     }
 
-    var requestData = JSON.parse(e.postData.contents);
-    var providedSecret = requestData.secret || "";
+    var requestData = {};
+    try {
+      requestData = JSON.parse(e.postData.contents);
+    } catch (parseErr) {
+      return createJsonResponse({ success: false, error: "Format JSON tidak valid: " + parseErr.message }, 400);
+    }
 
-    // 1. Verifikasi kunci rahasia (prioritas script property, fallback ke konstanta)
-    var configuredSecret = PropertiesService.getScriptProperties().getProperty("AUTH_SECRET_KEY") || AUTH_SECRET_KEY;
+    var providedSecret = (requestData.secret || "").trim();
+
+    // 1. Verifikasi Kunci Rahasia
+    var scriptProps = PropertiesService.getScriptProperties();
+    var configuredSecret = (scriptProps.getProperty("AUTH_SECRET_KEY") || AUTH_SECRET_KEY).trim();
+
     if (!providedSecret || providedSecret !== configuredSecret) {
       return createJsonResponse({ 
         success: false, 
-        error: "Akses ditolak: Kunci rahasia salah atau tidak disediakan." 
+        error: "Akses Ditolak: Kunci rahasia salah atau tidak cocok dengan konfigurasi Web App." 
       }, 403);
     }
 
     var action = requestData.action || "ping";
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    if (!ss) {
-      // Jika skrip berdiri sendiri (standalone), buat atau buka via ID
-      var fileId = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
-      if (fileId) {
-        ss = SpreadsheetApp.openById(fileId);
-      } else {
-        ss = SpreadsheetApp.create("AI_Account_Manager_Backup");
-        PropertiesService.getScriptProperties().setProperty("SPREADSHEET_ID", ss.getId());
-      }
-    }
+    var ss = getOrCreateSpreadsheet(scriptProps);
 
-    // 2. Aksi: Ping (CORS & Connectivity probe)
+    // 2. Aksi: Ping (Probe Latensi & Diagnostik Koneksi)
     if (action === "ping") {
+      var sheetsInfo = [];
+      var sheets = ss.getSheets();
+      for (var s = 0; s < sheets.length; s++) {
+        var sh = sheets[s];
+        sheetsInfo.push({
+          name: sh.getName(),
+          rowCount: Math.max(0, sh.getLastRow() - 1)
+        });
+      }
+
       return createJsonResponse({
         success: true,
         message: "Pong! Koneksi Apps Script Web App berhasil terverifikasi.",
         timestamp: new Date().toISOString(),
+        spreadsheetId: ss.getId(),
         spreadsheetName: ss.getName(),
-        spreadsheetUrl: ss.getUrl()
+        spreadsheetUrl: ss.getUrl(),
+        tabs: sheetsInfo
       });
     }
 
-    // 3. Aksi: Backup (PWA -> Sheet)
+    // 3. Aksi: Backup (PWA -> Google Sheets)
     if (action === "backup") {
       var backupData = requestData.data || {};
-      writeToSheet(ss, "services", backupData.services || []);
-      writeToSheet(ss, "persons", backupData.persons || []);
-      writeToSheet(ss, "access", backupData.access || []);
-      writeToSheet(ss, "logs", backupData.logs || []);
-      writeToSheet(ss, "handoff", backupData.handoffNotes || []);
+      var nowIso = new Date().toISOString();
+
+      // Siapkan baris metadata
+      var metaRows = [
+        { key: "appName", value: "AI Account Manager (PWA)", updatedAt: nowIso },
+        { key: "appVersion", value: "1.1.0", updatedAt: nowIso },
+        { key: "lastBackupAt", value: nowIso, updatedAt: nowIso },
+        { key: "resetTimezone", value: (backupData.settings && backupData.settings.resetTimezone) || "America/Los_Angeles", updatedAt: nowIso },
+        { key: "maxPersons", value: String((backupData.settings && backupData.settings.maxPersons) || 10), updatedAt: nowIso }
+      ];
+
+      var countServices = writeToSheet(ss, "services", backupData.services || []);
+      var countPersons  = writeToSheet(ss, "persons", backupData.persons || []);
+      var countAccess   = writeToSheet(ss, "access", backupData.access || []);
+      var countLogs     = writeToSheet(ss, "logs", backupData.logs || []);
+      var countHandoff  = writeToSheet(ss, "handoff", backupData.handoffNotes || []);
+      writeToSheet(ss, "metadata", metaRows);
 
       return createJsonResponse({
         success: true,
-        message: "Backup berhasil ditulis ke seluruh tab Spreadsheet.",
-        backupTimestamp: new Date().toISOString()
+        message: "Pencadangan berhasil! Data tersimpan di spreadsheet Google Sheets.",
+        backupTimestamp: nowIso,
+        spreadsheetName: ss.getName(),
+        spreadsheetUrl: ss.getUrl(),
+        counts: {
+          services: countServices,
+          persons: countPersons,
+          access: countAccess,
+          logs: countLogs,
+          handoffNotes: countHandoff,
+          total: countServices + countPersons + countAccess + countLogs + countHandoff
+        }
       });
     }
 
-    // 4. Aksi: Restore (Sheet -> PWA)
+    // 4. Aksi: Restore (Google Sheets -> PWA)
     if (action === "restore") {
+      var restoredServices = readFromSheet(ss, "services");
+      var restoredPersons  = readFromSheet(ss, "persons");
+      var restoredAccess   = readFromSheet(ss, "access");
+      var restoredLogs     = readFromSheet(ss, "logs");
+      var restoredHandoff  = readFromSheet(ss, "handoff");
+      var restoredMeta     = readFromSheet(ss, "metadata");
+
+      // Parse metadata ke settings
+      var settingsObj = {
+        resetTimezone: "America/Los_Angeles",
+        maxPersons: 10,
+        updatedAt: new Date().toISOString()
+      };
+
+      for (var m = 0; m < restoredMeta.length; m++) {
+        var row = restoredMeta[m];
+        if (row.key === "resetTimezone" && row.value) {
+          settingsObj.resetTimezone = row.value;
+        } else if (row.key === "maxPersons" && row.value) {
+          settingsObj.maxPersons = Number(row.value) || 10;
+        }
+      }
+
       var restored = {
-        services: readFromSheet(ss, "services"),
-        persons: readFromSheet(ss, "persons"),
-        access: readFromSheet(ss, "access"),
-        logs: readFromSheet(ss, "logs"),
-        handoffNotes: readFromSheet(ss, "handoff")
+        services: restoredServices,
+        persons: restoredPersons,
+        access: restoredAccess,
+        logs: restoredLogs,
+        handoffNotes: restoredHandoff,
+        settings: settingsObj
       };
 
       return createJsonResponse({
         success: true,
-        message: "Data pemulihan berhasil dibaca dari Spreadsheet.",
-        data: restored
+        message: "Data berhasil dipulihkan dari Google Sheets.",
+        data: restored,
+        counts: {
+          services: restoredServices.length,
+          persons: restoredPersons.length,
+          access: restoredAccess.length,
+          logs: restoredLogs.length,
+          handoffNotes: restoredHandoff.length
+        }
       });
     }
 
     return createJsonResponse({ success: false, error: "Aksi tidak dikenal: " + action }, 400);
 
   } catch (err) {
-    return createJsonResponse({ success: false, error: err.toString() }, 500);
+    return createJsonResponse({ 
+      success: false, 
+      error: "Kesalahan server Apps Script: " + (err.message || err.toString()) 
+    }, 500);
   }
 }
 
+/**
+ * Mengambil Spreadsheet aktif atau membuka/membuat spreadsheet baru
+ */
+function getOrCreateSpreadsheet(scriptProps) {
+  var ss = null;
+  try {
+    ss = SpreadsheetApp.getActiveSpreadsheet();
+  } catch (e) {
+    ss = null;
+  }
+
+  if (ss) return ss;
+
+  var storedId = scriptProps.getProperty("SPREADSHEET_ID");
+  if (storedId) {
+    try {
+      return SpreadsheetApp.openById(storedId);
+    } catch (openErr) {
+      // jika ID lama tidak dapat dibuka, buat baru
+    }
+  }
+
+  var newSs = SpreadsheetApp.create("AI_Account_Manager_Backup");
+  scriptProps.setProperty("SPREADSHEET_ID", newSs.getId());
+  return newSs;
+}
+
+/**
+ * Menulis data ke tab sheet dengan optimasi batch, sanitasi formula, dan styling elegan
+ */
 function writeToSheet(ss, sheetName, rows) {
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -129,12 +238,13 @@ function writeToSheet(ss, sheetName, rows) {
   var headers = SCHEMAS[sheetName] || (rows && rows.length > 0 ? Object.keys(rows[0]) : []);
   if (!headers || headers.length === 0) {
     sheet.appendRow(["_empty"]);
-    return;
+    return 0;
   }
 
   if (!rows || rows.length === 0) {
     sheet.appendRow(headers);
-    return;
+    formatHeaderRow(sheet, headers.length);
+    return 0;
   }
 
   var dataMatrix = [headers];
@@ -151,18 +261,54 @@ function writeToSheet(ss, sheetName, rows) {
       } else if (jsonCols.indexOf(h) >= 0) {
         rowValues.push(JSON.stringify(val));
       } else {
-        rowValues.push(String(val));
+        var strVal = String(val);
+        // Sanitasi formula injection: jika karakter awal formula, beri tanda kutip tunggal
+        if (/^[=+\-@]/.test(strVal)) {
+          rowValues.push("'" + strVal);
+        } else {
+          rowValues.push(strVal);
+        }
       }
     }
     dataMatrix.push(rowValues);
   }
 
-  // Tulis dengan proteksi format teks murni (@) untuk mencegah formula injection
+  // Tulis dengan proteksi teks murni (@)
   var range = sheet.getRange(1, 1, dataMatrix.length, headers.length);
   range.setNumberFormat('@');
   range.setValues(dataMatrix);
+
+  // Format visual header & kolom
+  formatHeaderRow(sheet, headers.length);
+
+  try {
+    sheet.autoResizeColumns(1, headers.length);
+  } catch (resizeErr) {
+    // Abaikan jika autoResizeColumns melampaui batas batas waktu
+  }
+
+  return rows.length;
 }
 
+/**
+ * Memformat baris judul (header) menjadi gelap modern, teks putih tebal, dan beku (freeze)
+ */
+function formatHeaderRow(sheet, colCount) {
+  try {
+    sheet.setFrozenRows(1);
+    var headerRange = sheet.getRange(1, 1, 1, colCount);
+    headerRange.setBackground("#1e293b"); // slate-800
+    headerRange.setFontColor("#f8fafc"); // slate-50
+    headerRange.setFontWeight("bold");
+    headerRange.setFontFamily("Roboto");
+  } catch (e) {
+    // Abaikan kegagalan styling pada lingkungan terbatas
+  }
+}
+
+/**
+ * Membaca data dari tab sheet dengan deserialisasi tipe yang tepat
+ */
 function readFromSheet(ss, sheetName) {
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet) return [];
@@ -188,7 +334,12 @@ function readFromSheet(ss, sheetName) {
       var key = headers[j];
       var rawVal = rawData[i][j];
       if (rawVal === "" || rawVal === undefined) {
-        continue; // abaikan kolom kosong agar nilai undefined terjaga
+        continue;
+      }
+
+      // Hapus leading single quote jika disanitasi dari formula injection
+      if (rawVal.charAt(0) === "'" && /^[=+\-@]/.test(rawVal.substring(1))) {
+        rawVal = rawVal.substring(1);
       }
 
       if (jsonCols.indexOf(key) >= 0) {
@@ -198,7 +349,7 @@ function readFromSheet(ss, sheetName) {
           item[key] = rawVal;
         }
       } else if (typeMap[key] === 'bool') {
-        item[key] = (rawVal === 'true');
+        item[key] = (rawVal.toLowerCase() === 'true');
       } else if (typeMap[key] === 'num') {
         item[key] = Number(rawVal);
       } else {
@@ -211,6 +362,9 @@ function readFromSheet(ss, sheetName) {
   return result;
 }
 
+/**
+ * Helper JSON response text/plain untuk CORS compatibility
+ */
 function createJsonResponse(obj, statusCode) {
   var output = ContentService.createTextOutput(JSON.stringify(obj));
   output.setMimeType(ContentService.MimeType.JSON);
